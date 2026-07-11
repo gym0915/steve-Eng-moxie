@@ -1,5 +1,5 @@
 ---
-name: steve-eng-dictation-2doc
+name: steve-Eng-moxie
 description: Use when the user mentions “英语默写”, “英语单词默写”, “英语词组默写”, “英语句子默写”, “默写英语”, “默写英语单词”, “默写英语词组”, “默写英语句子”, “默写英文”, “默写英文单词”, “默写英文词组”, “默写英文句子”, “English dictation”, “English vocabulary dictation”, “English phrase dictation”, or “English sentence dictation”, or asks to use provided images or text to create a printable Word worksheet for looking at Chinese prompts and writing the corresponding English words, phrases, or sentences.
 ---
 
