@@ -1,0 +1,4 @@
+interface:
+  display_name: "英语默写"
+  short_description: "从图片或文字制作看中文写英文的 Word 默写文档"
+  default_prompt: "Use $steve-eng-dictation-2doc to create a printable Chinese-prompt-to-English-answer Word dictation document from my materials."
