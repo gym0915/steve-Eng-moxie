@@ -65,6 +65,7 @@ class EnglishDictationGeneratorTests(unittest.TestCase):
             self.assertAlmostEqual(section.page_height.cm, 29.7, places=1)
             self.assertEqual(len(doc.tables[-1].columns), 5)
             self.assertEqual(len(doc.tables[-1].rows), 2)
+            self.assertEqual(len(doc.inline_shapes), len(items) + 2)
             with zipfile.ZipFile(output) as package:
                 xml = package.read("word/document.xml").decode("utf-8")
 

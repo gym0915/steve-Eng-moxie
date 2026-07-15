@@ -7,6 +7,7 @@ import argparse
 import json
 import math
 import re
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
@@ -17,12 +18,19 @@ from docx.enum.section import WD_SECTION
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
+from PIL import Image, ImageDraw, ImageFont
 
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "assets" / "template.html"
 MAX_ROWS_PER_PAGE = 13
 ANSWER_LINE = "________"
 FONT_CN = "Arial Unicode MS"
+FONT_CANDIDATES = (
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+)
 
 
 def load_template_contract() -> dict:
@@ -144,45 +152,79 @@ def _set_run_font(run, size: float, *, bold=False, color="1A1A1A", name=FONT_CN)
         r_fonts.set(qn(f"w:{key}"), name)
 
 
-def _add_meta_bar(doc):
-    table = doc.add_table(rows=1, cols=4)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    _set_table_geometry(table, [2480, 2100, 3550, 2415])
-    none = {"val": "nil"}
-    solid = {"val": "single", "sz": "16", "color": "1A1A1A"}
-    _set_table_borders(table, top=solid, bottom=solid, left=none, right=none, insideH=none, insideV=none)
+def _find_cjk_font() -> Path:
+    for candidate in FONT_CANDIDATES:
+        path = Path(candidate)
+        if path.exists():
+            return path
+    raise RuntimeError("未找到可用于中文提示的字体")
+
+
+def _set_picture_alt(shape, description: str):
+    shape._inline.docPr.set("descr", description)
+
+
+def _build_meta_image(directory: Path) -> Path:
+    font = ImageFont.truetype(str(_find_cjk_font()), 27)
+    canvas = Image.new("RGB", (1600, 130), "white")
+    draw = ImageDraw.Draw(canvas)
+    draw.line((0, 5, 1600, 5), fill="#1a1a1a", width=5)
+    draw.line((0, 124, 1600, 124), fill="#1a1a1a", width=5)
     labels = ["姓名：____________", "班级：__________", "日期：______月______日", "得分：__________"]
-    for cell, label in zip(table.rows[0].cells, labels):
-        _set_cell_margins(cell, top=110, start=20, bottom=110, end=20)
-        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-        paragraph = cell.paragraphs[0]
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        paragraph.paragraph_format.space_before = Pt(0)
-        paragraph.paragraph_format.space_after = Pt(0)
-        _set_run_font(paragraph.add_run(label), 10.5)
+    centers = [205, 570, 1020, 1420]
+    for label, center in zip(labels, centers):
+        box = draw.textbbox((0, 0), label, font=font)
+        draw.text((center - (box[2] - box[0]) / 2, 46), label, font=font, fill="#1a1a1a")
+    path = directory / "meta.png"
+    canvas.save(path, dpi=(300, 300))
+    return path
 
 
-def _add_section_title(doc, count: int):
-    table = doc.add_table(rows=1, cols=2)
-    table.alignment = WD_TABLE_ALIGNMENT.LEFT
-    _set_table_geometry(table, [150, 10395])
-    none = {"val": "nil"}
-    _set_table_borders(table, top=none, bottom=none, left=none, right=none, insideH=none, insideV=none)
-    accent_cell, title_cell = table.rows[0].cells
-    _set_cell_margins(accent_cell, top=100, start=0, bottom=100, end=0)
-    shading = OxmlElement("w:shd")
-    shading.set(qn("w:fill"), TEMPLATE_CONTRACT["accent_color"])
-    accent_cell._tc.get_or_add_tcPr().append(shading)
-    accent_cell.paragraphs[0].add_run(" ")
-    _set_cell_margins(title_cell, top=75, start=160, bottom=75, end=0)
-    paragraph = title_cell.paragraphs[0]
+def _build_section_image(directory: Path, count: int) -> Path:
+    title_font = ImageFont.truetype(str(_find_cjk_font()), 30)
+    count_font = ImageFont.truetype(str(_find_cjk_font()), 23)
+    canvas = Image.new("RGB", (1600, 92), "white")
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle((0, 15, 13, 77), fill=f"#{TEMPLATE_CONTRACT['accent_color']}")
+    draw.text((36, 24), TEMPLATE_CONTRACT["title"], font=title_font, fill="#1a1a1a")
+    draw.text((300, 31), f"共{count}题", font=count_font, fill="#888888")
+    path = directory / "section.png"
+    canvas.save(path, dpi=(300, 300))
+    return path
+
+
+def _build_prompt_image(directory: Path, prompt: str, index: int) -> Path:
+    font = ImageFont.truetype(str(_find_cjk_font()), 38)
+    canvas = Image.new("RGB", (420, 86), "white")
+    draw = ImageDraw.Draw(canvas)
+    box = draw.textbbox((0, 0), prompt, font=font)
+    width = box[2] - box[0]
+    height = box[3] - box[1]
+    draw.text(((420 - width) / 2, (86 - height) / 2 - box[1]), prompt, font=font, fill="#1a1a1a")
+    path = directory / f"prompt-{index:04d}.png"
+    canvas.save(path, dpi=(300, 300))
+    return path
+
+
+def _add_meta_bar(doc, directory: Path):
+    paragraph = doc.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(0)
-    _set_run_font(paragraph.add_run(TEMPLATE_CONTRACT["title"]), 13, bold=True)
-    _set_run_font(paragraph.add_run(f"  共{count}题"), 9.5, color="888888")
+    paragraph.paragraph_format.space_after = Pt(4)
+    shape = paragraph.add_run().add_picture(str(_build_meta_image(directory)), width=Cm(18.6))
+    _set_picture_alt(shape, "姓名、班级、日期、得分填写栏")
 
 
-def _add_content_table(doc, items: Sequence[dict]):
+def _add_section_title(doc, count: int, directory: Path):
+    paragraph = doc.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(4)
+    shape = paragraph.add_run().add_picture(str(_build_section_image(directory, count)), width=Cm(18.6))
+    _set_picture_alt(shape, f"{TEMPLATE_CONTRACT['title']} 共{count}题")
+
+
+def _add_content_table(doc, items: Sequence[dict], directory: Path, start_index: int):
     columns = TEMPLATE_CONTRACT["columns"]
     rows = math.ceil(len(items) / columns)
     table = doc.add_table(rows=rows, cols=columns)
@@ -201,7 +243,9 @@ def _add_content_table(doc, items: Sequence[dict]):
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         paragraph.paragraph_format.space_before = Pt(0)
         paragraph.paragraph_format.space_after = Pt(2)
-        _set_run_font(paragraph.add_run(item["prompt"]), 12)
+        prompt_path = _build_prompt_image(directory, item["prompt"], start_index + index)
+        shape = paragraph.add_run().add_picture(str(prompt_path), width=Cm(3.2))
+        _set_picture_alt(shape, f"中文提示：{item['prompt']}")
         line = cell.add_paragraph()
         line.alignment = WD_ALIGN_PARAGRAPH.CENTER
         line.paragraph_format.space_before = Pt(0)
@@ -210,16 +254,10 @@ def _add_content_table(doc, items: Sequence[dict]):
     return table
 
 
-def _add_page(doc, items: Sequence[dict], total_count: int):
-    _add_meta_bar(doc)
-    spacer = doc.add_paragraph()
-    spacer.paragraph_format.space_before = Pt(0)
-    spacer.paragraph_format.space_after = Pt(4)
-    _add_section_title(doc, total_count)
-    spacer = doc.add_paragraph()
-    spacer.paragraph_format.space_before = Pt(0)
-    spacer.paragraph_format.space_after = Pt(4)
-    _add_content_table(doc, items)
+def _add_page(doc, items: Sequence[dict], total_count: int, directory: Path, start_index: int):
+    _add_meta_bar(doc, directory)
+    _add_section_title(doc, total_count, directory)
+    _add_content_table(doc, items, directory, start_index)
 
 
 def create_document(items: Sequence[dict], output_path: Path | str):
@@ -238,14 +276,15 @@ def create_document(items: Sequence[dict], output_path: Path | str):
     normal.font.name = FONT_CN
     normal.font.size = Pt(10.5)
 
-    for page_index, start in enumerate(range(0, len(validated), items_per_page)):
-        if page_index:
-            doc.add_section(WD_SECTION.NEW_PAGE)
-        _add_page(doc, validated[start:start + items_per_page], len(validated))
-
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(output)
+    with tempfile.TemporaryDirectory() as tmp:
+        image_dir = Path(tmp)
+        for page_index, start in enumerate(range(0, len(validated), items_per_page)):
+            if page_index:
+                doc.add_section(WD_SECTION.NEW_PAGE)
+            _add_page(doc, validated[start:start + items_per_page], len(validated), image_dir, start)
+        doc.save(output)
     return output
 
 

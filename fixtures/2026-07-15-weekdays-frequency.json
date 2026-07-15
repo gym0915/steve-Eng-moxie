@@ -1,0 +1,16 @@
+{
+  "items": [
+    {"prompt": "星期一", "answer": "Monday"},
+    {"prompt": "星期二", "answer": "Tuesday"},
+    {"prompt": "星期三", "answer": "Wednesday"},
+    {"prompt": "星期四", "answer": "Thursday"},
+    {"prompt": "星期五", "answer": "Friday"},
+    {"prompt": "星期六", "answer": "Saturday"},
+    {"prompt": "星期天", "answer": "Sunday"},
+    {"prompt": "通常", "answer": "usually"},
+    {"prompt": "有时", "answer": "sometimes"},
+    {"prompt": "总是", "answer": "always"},
+    {"prompt": "经常", "answer": "often"},
+    {"prompt": "从不", "answer": "never"}
+  ]
+}
