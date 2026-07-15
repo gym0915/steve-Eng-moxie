@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>看中文写英文</title>
+<style>
+  :root{--ink:#1a1a1a;--muted:#888;--accent:#c0392b;--columns:5;}
+  *{box-sizing:border-box;}
+  body{font-family:"Kaiti SC","KaiTi","STKaiti","Songti SC","SimSun",serif;color:var(--ink);margin:0;background:#f4f4f4;}
+  .page{width:210mm;min-height:297mm;margin:12px auto;background:#fff;padding:16mm 12mm;box-shadow:0 2px 12px rgba(0,0,0,.12);}
+  .meta{display:flex;justify-content:space-between;border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);padding:8px 4px;font-size:15px;margin-bottom:22px;}
+  .meta span{white-space:nowrap;}
+  .sec-title{font-size:17px;font-weight:bold;margin:0 0 18px;padding-left:10px;border-left:5px solid var(--accent);letter-spacing:2px;}
+  .sec-title small{font-weight:normal;color:var(--muted);font-size:13px;margin-left:8px;letter-spacing:0;}
+  .word-grid{display:grid;grid-template-columns:repeat(5,1fr);row-gap:14px;column-gap:8px;justify-items:stretch;}
+  .word{text-align:center;break-inside:avoid;}
+  .prompt{font-size:16px;line-height:24px;white-space:nowrap;}
+  .answer-line{font-family:Arial,sans-serif;font-size:17px;line-height:24px;letter-spacing:1px;}
+  @media print{body{background:#fff;}.page{margin:0;box-shadow:none;width:auto;min-height:auto;padding:12mm;}@page{size:A4 portrait;margin:0;}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="meta"><span>姓名：____________</span><span>班级：__________</span><span>日期：______月______日</span><span>得分：__________</span></div>
+  <div class="sec-title">看中文写英文<small>共{{COUNT}}题</small></div>
+  <div class="word-grid">{{WORDS}}</div>
+</div>
+</body>
+</html>
