@@ -36,9 +36,18 @@ FONT_CANDIDATES = (
 def load_template_contract() -> dict:
     html = TEMPLATE_PATH.read_text(encoding="utf-8")
     patterns = {
+        "ink_color": r"--ink:\s*#([0-9a-fA-F]{3,6})",
+        "muted_color": r"--muted:\s*#([0-9a-fA-F]{3,6})",
         "accent_color": r"--accent:\s*#([0-9a-fA-F]{6})",
         "columns": r"\.word-grid\{[^}]*grid-template-columns:\s*repeat\((\d+),",
         "title": r'<div class="sec-title">\s*([^<{]+)',
+        "meta_px": r"\.meta\{[^}]*font-size:(\d+)px",
+        "title_px": r"\.sec-title\{[^}]*font-size:(\d+)px",
+        "count_px": r"\.sec-title small\{[^}]*font-size:(\d+)px",
+        "prompt_px": r"\.prompt\{[^}]*font-size:(\d+)px",
+        "answer_px": r"\.answer-line\{[^}]*font-size:(\d+)px",
+        "row_gap_px": r"\.word-grid\{[^}]*row-gap:(\d+)px",
+        "column_gap_px": r"\.word-grid\{[^}]*column-gap:(\d+)px",
     }
     contract = {}
     for key, pattern in patterns.items():
@@ -46,8 +55,18 @@ def load_template_contract() -> dict:
         if not match:
             raise ValueError(f"模板缺少必要样式：{key}")
         contract[key] = match.group(1).strip()
-    contract["columns"] = int(contract["columns"])
-    contract["accent_color"] = contract["accent_color"].upper()
+    for key in ("columns", "meta_px", "title_px", "count_px", "prompt_px", "answer_px", "row_gap_px", "column_gap_px"):
+        contract[key] = int(contract[key])
+    for key in ("ink_color", "muted_color", "accent_color"):
+        contract[key] = contract[key].upper()
+    meta_match = re.search(r'<div class="meta">(.*?)</div>', html, re.DOTALL)
+    if not meta_match:
+        raise ValueError("模板缺少信息栏")
+    contract["meta_fields"] = re.findall(r"<span>(.*?)</span>", meta_match.group(1), re.DOTALL)
+    page_margins = re.findall(r"\.page\{[^}]*padding:(\d+)mm", html)
+    if not page_margins:
+        raise ValueError("模板缺少打印页边距")
+    contract["page_margin_mm"] = int(page_margins[-1])
     if "@page{size:A4portrait" not in re.sub(r"\s+", "", html):
         raise ValueError("模板必须声明 A4 纵向打印")
     if "{{COUNT}}" not in html or "{{WORDS}}" not in html:
@@ -165,42 +184,63 @@ def _set_picture_alt(shape, description: str):
 
 
 def _build_meta_image(directory: Path) -> Path:
-    font = ImageFont.truetype(str(_find_cjk_font()), 27)
+    font = ImageFont.truetype(str(_find_cjk_font()), round(TEMPLATE_CONTRACT["meta_px"] * 1.8))
     canvas = Image.new("RGB", (1600, 130), "white")
     draw = ImageDraw.Draw(canvas)
-    draw.line((0, 5, 1600, 5), fill="#1a1a1a", width=5)
-    draw.line((0, 124, 1600, 124), fill="#1a1a1a", width=5)
-    labels = ["姓名：____________", "班级：__________", "日期：______月______日", "得分：__________"]
+    ink = f"#{TEMPLATE_CONTRACT['ink_color']}"
+    draw.line((0, 5, 1600, 5), fill=ink, width=5)
+    draw.line((0, 124, 1600, 124), fill=ink, width=5)
+    labels = TEMPLATE_CONTRACT["meta_fields"]
+    if len(labels) != 4:
+        raise ValueError("模板信息栏必须包含四个字段")
     centers = [205, 570, 1020, 1420]
     for label, center in zip(labels, centers):
         box = draw.textbbox((0, 0), label, font=font)
-        draw.text((center - (box[2] - box[0]) / 2, 46), label, font=font, fill="#1a1a1a")
+        draw.text((center - (box[2] - box[0]) / 2, 46), label, font=font, fill=ink)
     path = directory / "meta.png"
     canvas.save(path, dpi=(300, 300))
     return path
 
 
 def _build_section_image(directory: Path, count: int) -> Path:
-    title_font = ImageFont.truetype(str(_find_cjk_font()), 30)
-    count_font = ImageFont.truetype(str(_find_cjk_font()), 23)
+    title_font = ImageFont.truetype(str(_find_cjk_font()), round(TEMPLATE_CONTRACT["title_px"] * 1.8))
+    count_font = ImageFont.truetype(str(_find_cjk_font()), round(TEMPLATE_CONTRACT["count_px"] * 1.8))
     canvas = Image.new("RGB", (1600, 92), "white")
     draw = ImageDraw.Draw(canvas)
     draw.rectangle((0, 15, 13, 77), fill=f"#{TEMPLATE_CONTRACT['accent_color']}")
-    draw.text((36, 24), TEMPLATE_CONTRACT["title"], font=title_font, fill="#1a1a1a")
-    draw.text((300, 31), f"共{count}题", font=count_font, fill="#888888")
+    draw.text((36, 24), TEMPLATE_CONTRACT["title"], font=title_font, fill=f"#{TEMPLATE_CONTRACT['ink_color']}")
+    draw.text((300, 31), f"共{count}题", font=count_font, fill=f"#{TEMPLATE_CONTRACT['muted_color']}")
     path = directory / "section.png"
     canvas.save(path, dpi=(300, 300))
     return path
 
 
 def _build_prompt_image(directory: Path, prompt: str, index: int) -> Path:
-    font = ImageFont.truetype(str(_find_cjk_font()), 38)
-    canvas = Image.new("RGB", (420, 86), "white")
+    font_size = round(TEMPLATE_CONTRACT["prompt_px"] * 2.375)
+    font = ImageFont.truetype(str(_find_cjk_font()), font_size)
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1), "white"))
+    lines = []
+    current = ""
+    for char in prompt:
+        candidate = current + char
+        box = measure.textbbox((0, 0), candidate, font=font)
+        if current and box[2] - box[0] > 380:
+            lines.append(current)
+            current = char
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    line_height = font_size + 14
+    canvas_height = max(86, 20 + line_height * len(lines))
+    canvas = Image.new("RGB", (420, canvas_height), "white")
     draw = ImageDraw.Draw(canvas)
-    box = draw.textbbox((0, 0), prompt, font=font)
-    width = box[2] - box[0]
-    height = box[3] - box[1]
-    draw.text(((420 - width) / 2, (86 - height) / 2 - box[1]), prompt, font=font, fill="#1a1a1a")
+    top = (canvas_height - line_height * len(lines)) / 2
+    for line_index, line in enumerate(lines):
+        box = draw.textbbox((0, 0), line, font=font)
+        width = box[2] - box[0]
+        y = top + line_index * line_height + (line_height - (box[3] - box[1])) / 2 - box[1]
+        draw.text(((420 - width) / 2, y), line, font=font, fill=f"#{TEMPLATE_CONTRACT['ink_color']}")
     path = directory / f"prompt-{index:04d}.png"
     canvas.save(path, dpi=(300, 300))
     return path
@@ -238,7 +278,9 @@ def _add_content_table(doc, items: Sequence[dict], directory: Path, start_index:
     for index, item in enumerate(items):
         cell = table.cell(index // columns, index % columns)
         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-        _set_cell_margins(cell, top=140, start=70, bottom=140, end=70)
+        vertical_margin = max(60, TEMPLATE_CONTRACT["row_gap_px"] * 15 // 2)
+        horizontal_margin = max(40, TEMPLATE_CONTRACT["column_gap_px"] * 15 // 2)
+        _set_cell_margins(cell, top=vertical_margin, start=horizontal_margin, bottom=vertical_margin, end=horizontal_margin)
         paragraph = cell.paragraphs[0]
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         paragraph.paragraph_format.space_before = Pt(0)
@@ -250,7 +292,7 @@ def _add_content_table(doc, items: Sequence[dict], directory: Path, start_index:
         line.alignment = WD_ALIGN_PARAGRAPH.CENTER
         line.paragraph_format.space_before = Pt(0)
         line.paragraph_format.space_after = Pt(0)
-        _set_run_font(line.add_run(ANSWER_LINE), 13, name="Arial")
+        _set_run_font(line.add_run(ANSWER_LINE), TEMPLATE_CONTRACT["answer_px"] * 0.75, name="Arial")
     return table
 
 
@@ -268,10 +310,11 @@ def create_document(items: Sequence[dict], output_path: Path | str):
     section = doc.sections[0]
     section.page_width = Cm(21.0)
     section.page_height = Cm(29.7)
-    section.top_margin = Cm(1.2)
-    section.bottom_margin = Cm(1.2)
-    section.left_margin = Cm(1.2)
-    section.right_margin = Cm(1.2)
+    margin = Cm(TEMPLATE_CONTRACT["page_margin_mm"] / 10)
+    section.top_margin = margin
+    section.bottom_margin = margin
+    section.left_margin = margin
+    section.right_margin = margin
     normal = doc.styles["Normal"]
     normal.font.name = FONT_CN
     normal.font.size = Pt(10.5)

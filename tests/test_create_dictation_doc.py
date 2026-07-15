@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 from docx import Document
+from PIL import Image, ImageChops
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,36 @@ class EnglishDictationGeneratorTests(unittest.TestCase):
         contract = module.load_template_contract()
         self.assertEqual(contract["columns"], 5)
         self.assertEqual(contract["accent_color"], "C0392B")
+        self.assertEqual(contract["ink_color"], "1A1A1A")
+        self.assertEqual(contract["muted_color"], "888")
         self.assertEqual(contract["title"], "看中文写英文")
+        self.assertEqual(contract["meta_fields"], [
+            "姓名：____________",
+            "班级：__________",
+            "日期：______月______日",
+            "得分：__________",
+        ])
+        self.assertEqual(contract["page_margin_mm"], 12)
+        self.assertEqual(contract["prompt_px"], 16)
+        self.assertEqual(contract["answer_px"], 17)
+
+    def test_long_prompt_wraps_without_touching_image_edges(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = module._build_prompt_image(
+                Path(tmp),
+                "这是一个用于验证长中文释义不会被裁切的测试句子",
+                0,
+            )
+            image = Image.open(path).convert("RGB")
+            difference = ImageChops.difference(image, Image.new("RGB", image.size, "white"))
+            bounds = difference.getbbox()
+        self.assertGreater(image.height, 86)
+        self.assertIsNotNone(bounds)
+        self.assertGreater(bounds[0], 0)
+        self.assertGreater(bounds[1], 0)
+        self.assertLess(bounds[2], image.width)
+        self.assertLess(bounds[3], image.height)
 
     def test_rejects_empty_items(self):
         module = load_module()
@@ -76,6 +106,24 @@ class EnglishDictationGeneratorTests(unittest.TestCase):
         self.assertEqual(xml.count("<w:t>________</w:t>"), 6)
         self.assertIn("看中文写英文", xml)
         self.assertIn("共6题", xml)
+
+    def test_repeats_template_header_and_preserves_order_after_sixty_five_items(self):
+        module = load_module()
+        items = [
+            {"prompt": f"第{i}题", "answer": f"answer{i}"}
+            for i in range(1, 67)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "multipage.docx"
+            module.create_document(items, output)
+            doc = Document(output)
+            with zipfile.ZipFile(output) as package:
+                xml = package.read("word/document.xml").decode("utf-8")
+        self.assertEqual(len(doc.sections), 2)
+        self.assertEqual(len(doc.tables), 2)
+        self.assertEqual(len(doc.inline_shapes), 66 + 4)
+        self.assertEqual(xml.count("姓名、班级、日期、得分填写栏"), 2)
+        self.assertLess(xml.index("中文提示：第65题"), xml.index("中文提示：第66题"))
 
 
 if __name__ == "__main__":
