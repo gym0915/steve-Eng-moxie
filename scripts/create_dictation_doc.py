@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "assets" / "template.html"
-MAX_ROWS_PER_PAGE = 13
+MAX_CONTENT_LINE_UNITS_PER_PAGE = 13
 ANSWER_LINE = "________"
 FONT_CN = "Arial Unicode MS"
 FONT_CANDIDATES = (
@@ -48,6 +48,16 @@ def load_template_contract() -> dict:
         "answer_px": r"\.answer-line\{[^}]*font-size:(\d+)px",
         "row_gap_px": r"\.word-grid\{[^}]*row-gap:(\d+)px",
         "column_gap_px": r"\.word-grid\{[^}]*column-gap:(\d+)px",
+        "meta_border_px": r"\.meta\{[^}]*border-top:(\d+)px",
+        "meta_padding_px": r"\.meta\{[^}]*padding:(\d+)px",
+        "meta_padding_x_px": r"\.meta\{[^}]*padding:\d+px\s+(\d+)px",
+        "meta_margin_bottom_px": r"\.meta\{[^}]*margin-bottom:(\d+)px",
+        "section_border_px": r"\.sec-title\{[^}]*border-left:(\d+)px",
+        "section_padding_left_px": r"\.sec-title\{[^}]*padding-left:(\d+)px",
+        "section_margin_bottom_px": r"\.sec-title\{[^}]*margin:\s*0\s+0\s+(\d+)px",
+        "count_margin_left_px": r"\.sec-title small\{[^}]*margin-left:(\d+)px",
+        "prompt_line_height_px": r"\.prompt\{[^}]*line-height:(\d+)px",
+        "answer_line_height_px": r"\.answer-line\{[^}]*line-height:(\d+)px",
     }
     contract = {}
     for key, pattern in patterns.items():
@@ -55,7 +65,14 @@ def load_template_contract() -> dict:
         if not match:
             raise ValueError(f"模板缺少必要样式：{key}")
         contract[key] = match.group(1).strip()
-    for key in ("columns", "meta_px", "title_px", "count_px", "prompt_px", "answer_px", "row_gap_px", "column_gap_px"):
+    numeric_keys = (
+        "columns", "meta_px", "title_px", "count_px", "prompt_px", "answer_px",
+        "row_gap_px", "column_gap_px", "meta_border_px", "meta_padding_px",
+        "meta_padding_x_px", "meta_margin_bottom_px", "section_border_px",
+        "section_padding_left_px", "section_margin_bottom_px", "count_margin_left_px",
+        "prompt_line_height_px", "answer_line_height_px",
+    )
+    for key in numeric_keys:
         contract[key] = int(contract[key])
     for key in ("ink_color", "muted_color", "accent_color"):
         contract[key] = contract[key].upper()
@@ -185,18 +202,28 @@ def _set_picture_alt(shape, description: str):
 
 def _build_meta_image(directory: Path) -> Path:
     font = ImageFont.truetype(str(_find_cjk_font()), round(TEMPLATE_CONTRACT["meta_px"] * 1.8))
-    canvas = Image.new("RGB", (1600, 130), "white")
-    draw = ImageDraw.Draw(canvas)
-    ink = f"#{TEMPLATE_CONTRACT['ink_color']}"
-    draw.line((0, 5, 1600, 5), fill=ink, width=5)
-    draw.line((0, 124, 1600, 124), fill=ink, width=5)
+    border_width = max(1, round(TEMPLATE_CONTRACT["meta_border_px"] * 2.5))
+    padding_y = round(TEMPLATE_CONTRACT["meta_padding_px"] * 2.5)
+    padding_x = round(TEMPLATE_CONTRACT["meta_padding_x_px"] * 2.5)
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1), "white"))
     labels = TEMPLATE_CONTRACT["meta_fields"]
     if len(labels) != 4:
         raise ValueError("模板信息栏必须包含四个字段")
-    centers = [205, 570, 1020, 1420]
-    for label, center in zip(labels, centers):
-        box = draw.textbbox((0, 0), label, font=font)
-        draw.text((center - (box[2] - box[0]) / 2, 46), label, font=font, fill=ink)
+    boxes = [probe.textbbox((0, 0), label, font=font) for label in labels]
+    text_height = max(box[3] - box[1] for box in boxes)
+    canvas_height = text_height + padding_y * 2 + border_width * 2
+    canvas = Image.new("RGB", (1600, canvas_height), "white")
+    draw = ImageDraw.Draw(canvas)
+    ink = f"#{TEMPLATE_CONTRACT['ink_color']}"
+    draw.rectangle((0, 0, 1599, border_width - 1), fill=ink)
+    draw.rectangle((0, canvas_height - border_width, 1599, canvas_height - 1), fill=ink)
+    widths = [box[2] - box[0] for box in boxes]
+    available_gap = (1600 - padding_x * 2 - sum(widths)) / 3
+    x = padding_x
+    for label, box, width in zip(labels, boxes, widths):
+        y = border_width + padding_y + (text_height - (box[3] - box[1])) / 2 - box[1]
+        draw.text((x, y), label, font=font, fill=ink)
+        x += width + available_gap
     path = directory / "meta.png"
     canvas.save(path, dpi=(300, 300))
     return path
@@ -205,17 +232,23 @@ def _build_meta_image(directory: Path) -> Path:
 def _build_section_image(directory: Path, count: int) -> Path:
     title_font = ImageFont.truetype(str(_find_cjk_font()), round(TEMPLATE_CONTRACT["title_px"] * 1.8))
     count_font = ImageFont.truetype(str(_find_cjk_font()), round(TEMPLATE_CONTRACT["count_px"] * 1.8))
+    bar_width = max(1, round(TEMPLATE_CONTRACT["section_border_px"] * 2.5))
+    padding_left = round(TEMPLATE_CONTRACT["section_padding_left_px"] * 2.5)
+    count_gap = round(TEMPLATE_CONTRACT["count_margin_left_px"] * 2.5)
     canvas = Image.new("RGB", (1600, 92), "white")
     draw = ImageDraw.Draw(canvas)
-    draw.rectangle((0, 15, 13, 77), fill=f"#{TEMPLATE_CONTRACT['accent_color']}")
-    draw.text((36, 24), TEMPLATE_CONTRACT["title"], font=title_font, fill=f"#{TEMPLATE_CONTRACT['ink_color']}")
-    draw.text((300, 31), f"共{count}题", font=count_font, fill=f"#{TEMPLATE_CONTRACT['muted_color']}")
+    draw.rectangle((0, 15, bar_width - 1, 77), fill=f"#{TEMPLATE_CONTRACT['accent_color']}")
+    title_x = bar_width + padding_left
+    title_y = 24
+    draw.text((title_x, title_y), TEMPLATE_CONTRACT["title"], font=title_font, fill=f"#{TEMPLATE_CONTRACT['ink_color']}")
+    title_box = draw.textbbox((title_x, title_y), TEMPLATE_CONTRACT["title"], font=title_font)
+    draw.text((title_box[2] + count_gap, 31), f"共{count}题", font=count_font, fill=f"#{TEMPLATE_CONTRACT['muted_color']}")
     path = directory / "section.png"
     canvas.save(path, dpi=(300, 300))
     return path
 
 
-def _build_prompt_image(directory: Path, prompt: str, index: int) -> Path:
+def _wrap_prompt_lines(prompt: str) -> list[str]:
     font_size = round(TEMPLATE_CONTRACT["prompt_px"] * 2.375)
     font = ImageFont.truetype(str(_find_cjk_font()), font_size)
     measure = ImageDraw.Draw(Image.new("RGB", (1, 1), "white"))
@@ -231,7 +264,14 @@ def _build_prompt_image(directory: Path, prompt: str, index: int) -> Path:
             current = candidate
     if current:
         lines.append(current)
-    line_height = font_size + 14
+    return lines
+
+
+def _build_prompt_image(directory: Path, prompt: str, index: int) -> Path:
+    font_size = round(TEMPLATE_CONTRACT["prompt_px"] * 2.375)
+    font = ImageFont.truetype(str(_find_cjk_font()), font_size)
+    lines = _wrap_prompt_lines(prompt)
+    line_height = round(TEMPLATE_CONTRACT["prompt_line_height_px"] * 2.15)
     canvas_height = max(86, 20 + line_height * len(lines))
     canvas = Image.new("RGB", (420, canvas_height), "white")
     draw = ImageDraw.Draw(canvas)
@@ -250,8 +290,9 @@ def _add_meta_bar(doc, directory: Path):
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(4)
-    shape = paragraph.add_run().add_picture(str(_build_meta_image(directory)), width=Cm(18.6))
+    paragraph.paragraph_format.space_after = Pt(TEMPLATE_CONTRACT["meta_margin_bottom_px"] * 0.75)
+    content_width_cm = 21 - 2 * TEMPLATE_CONTRACT["page_margin_mm"] / 10
+    shape = paragraph.add_run().add_picture(str(_build_meta_image(directory)), width=Cm(content_width_cm))
     _set_picture_alt(shape, "姓名、班级、日期、得分填写栏")
 
 
@@ -259,8 +300,9 @@ def _add_section_title(doc, count: int, directory: Path):
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
     paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(4)
-    shape = paragraph.add_run().add_picture(str(_build_section_image(directory, count)), width=Cm(18.6))
+    paragraph.paragraph_format.space_after = Pt(TEMPLATE_CONTRACT["section_margin_bottom_px"] * 0.75)
+    content_width_cm = 21 - 2 * TEMPLATE_CONTRACT["page_margin_mm"] / 10
+    shape = paragraph.add_run().add_picture(str(_build_section_image(directory, count)), width=Cm(content_width_cm))
     _set_picture_alt(shape, f"{TEMPLATE_CONTRACT['title']} 共{count}题")
 
 
@@ -286,12 +328,16 @@ def _add_content_table(doc, items: Sequence[dict], directory: Path, start_index:
         paragraph.paragraph_format.space_before = Pt(0)
         paragraph.paragraph_format.space_after = Pt(2)
         prompt_path = _build_prompt_image(directory, item["prompt"], start_index + index)
-        shape = paragraph.add_run().add_picture(str(prompt_path), width=Cm(3.2))
+        content_width_cm = 21 - 2 * TEMPLATE_CONTRACT["page_margin_mm"] / 10
+        gap_cm = TEMPLATE_CONTRACT["column_gap_px"] * 2.54 / 96
+        prompt_width_cm = content_width_cm / columns - gap_cm
+        shape = paragraph.add_run().add_picture(str(prompt_path), width=Cm(prompt_width_cm))
         _set_picture_alt(shape, f"中文提示：{item['prompt']}")
         line = cell.add_paragraph()
         line.alignment = WD_ALIGN_PARAGRAPH.CENTER
         line.paragraph_format.space_before = Pt(0)
         line.paragraph_format.space_after = Pt(0)
+        line.paragraph_format.line_spacing = Pt(TEMPLATE_CONTRACT["answer_line_height_px"] * 0.75)
         _set_run_font(line.add_run(ANSWER_LINE), TEMPLATE_CONTRACT["answer_px"] * 0.75, name="Arial")
     return table
 
@@ -302,10 +348,29 @@ def _add_page(doc, items: Sequence[dict], total_count: int, directory: Path, sta
     _add_content_table(doc, items, directory, start_index)
 
 
+def _paginate_items(items: Sequence[dict]) -> list[list[dict]]:
+    columns = TEMPLATE_CONTRACT["columns"]
+    rows = [list(items[start:start + columns]) for start in range(0, len(items), columns)]
+    pages = []
+    current_page = []
+    used_units = 0
+    for row in rows:
+        row_units = max(len(_wrap_prompt_lines(item["prompt"])) for item in row)
+        if row_units > MAX_CONTENT_LINE_UNITS_PER_PAGE:
+            raise ValueError("中文提示过长，无法在一页内完整显示")
+        if current_page and used_units + row_units > MAX_CONTENT_LINE_UNITS_PER_PAGE:
+            pages.append(current_page)
+            current_page = []
+            used_units = 0
+        current_page.extend(row)
+        used_units += row_units
+    if current_page:
+        pages.append(current_page)
+    return pages
+
+
 def create_document(items: Sequence[dict], output_path: Path | str):
     validated = validate_items(items)
-    columns = TEMPLATE_CONTRACT["columns"]
-    items_per_page = columns * MAX_ROWS_PER_PAGE
     doc = Document()
     section = doc.sections[0]
     section.page_width = Cm(21.0)
@@ -323,10 +388,12 @@ def create_document(items: Sequence[dict], output_path: Path | str):
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         image_dir = Path(tmp)
-        for page_index, start in enumerate(range(0, len(validated), items_per_page)):
+        start = 0
+        for page_index, page_items in enumerate(_paginate_items(validated)):
             if page_index:
                 doc.add_section(WD_SECTION.NEW_PAGE)
-            _add_page(doc, validated[start:start + items_per_page], len(validated), image_dir, start)
+            _add_page(doc, page_items, len(validated), image_dir, start)
+            start += len(page_items)
         doc.save(output)
     return output
 

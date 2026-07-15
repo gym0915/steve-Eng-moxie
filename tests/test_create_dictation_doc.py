@@ -37,6 +37,16 @@ class EnglishDictationGeneratorTests(unittest.TestCase):
         self.assertEqual(contract["page_margin_mm"], 12)
         self.assertEqual(contract["prompt_px"], 16)
         self.assertEqual(contract["answer_px"], 17)
+        self.assertEqual(contract["meta_border_px"], 2)
+        self.assertEqual(contract["meta_padding_px"], 8)
+        self.assertEqual(contract["meta_padding_x_px"], 4)
+        self.assertEqual(contract["meta_margin_bottom_px"], 22)
+        self.assertEqual(contract["section_border_px"], 5)
+        self.assertEqual(contract["section_padding_left_px"], 10)
+        self.assertEqual(contract["section_margin_bottom_px"], 18)
+        self.assertEqual(contract["count_margin_left_px"], 8)
+        self.assertEqual(contract["prompt_line_height_px"], 24)
+        self.assertEqual(contract["answer_line_height_px"], 24)
 
     def test_long_prompt_wraps_without_touching_image_edges(self):
         module = load_module()
@@ -124,6 +134,21 @@ class EnglishDictationGeneratorTests(unittest.TestCase):
         self.assertEqual(len(doc.inline_shapes), 66 + 4)
         self.assertEqual(xml.count("姓名、班级、日期、得分填写栏"), 2)
         self.assertLess(xml.index("中文提示：第65题"), xml.index("中文提示：第66题"))
+
+    def test_long_prompt_rows_reduce_items_per_page_to_keep_headers_repeating(self):
+        module = load_module()
+        long_prompt = "这是一个需要自动换行并参与分页高度预算的中文释义测试句子"
+        items = [
+            {"prompt": long_prompt, "answer": f"answer{i}"}
+            for i in range(25)
+        ]
+        pages = module._paginate_items(items)
+        self.assertGreater(len(pages), 1)
+        self.assertEqual(sum(len(page) for page in pages), 25)
+        for page in pages:
+            rows = [page[index:index + 5] for index in range(0, len(page), 5)]
+            line_units = sum(max(len(module._wrap_prompt_lines(item["prompt"])) for item in row) for row in rows)
+            self.assertLessEqual(line_units, module.MAX_CONTENT_LINE_UNITS_PER_PAGE)
 
 
 if __name__ == "__main__":
